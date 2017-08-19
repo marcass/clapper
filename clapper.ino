@@ -1,5 +1,21 @@
-const int relay = 2;
-const int soundPin = A0;
+#include <avr/io.h>
+#include "FastRunningMedian.h"
+
+//#define debug
+//#define nano
+#define attiny
+//#define avr
+#define basic
+
+#ifdef attiny
+  const int relay = 1; //D1 on attiny, 6 on nano
+  const int soundPin = 1; //A0 on arduino, A1 on attiny
+#endif
+#ifdef nano
+  const int relay = 6; //1 on attiny, 6 on nano
+  const int soundPin = 0; //A0 on arduino, 2 on attiny
+#endif
+
 int state;
 int sound;
 const int clapThresh = 2;
@@ -9,8 +25,9 @@ const long quiet = 200; //period that must be quiet to distiguish between clap a
 const long pause = 2000;
 unsigned long startTime; //time for sequence of claps
 unsigned long clapTime; //time for each clap
+FastRunningMedian<int, 16, 1> newMedian;
 
-#define debug
+
 
 //states
 const int idle = 0;
@@ -21,11 +38,32 @@ const int switching = 4;
 int nextState;
 
 void setup() {
-  Serial.begin(9600);
+  #ifdef avr
+    ADMUX |= (1 << REFS0);   //sets reference voltage to internal 1.1V
+    #ifdef attiny
+      ADMUX |= (0 << MUX0);   //combined with next line…
+      ADMUX |= (1 << MUX1);   //sets ADC1 as analog input channel
+    #endif
+    #ifdef nano
+      ADMUX |= (0 << MUX0);
+      ADMUX |= (0 << MUX1); //preceding and folling lines inlc this one for ADC on nano
+      ADMUX |= (0 << MUX3);
+    #endif
+    ADMUX |= (1 << ADLAR);   //left adjusts for 8-bit resolution
+    ADCSRA |= (1 << ADEN);   //enables the ADC
+    ADCSRA |= (1 << ADPS1);   //with next line…
+    ADCSRA |= (1 << ADPS0);   //set division factor-8 for 125kHz ADC clock
+  #endif
+  #ifdef debug
+    Serial.begin(9600);
+    Serial.println("Starting clapper");
+  #endif
   pinMode(relay, OUTPUT);
   digitalWrite(relay, LOW);
   light = false;
   state = idle;
+  //ADC setiup
+  ADMUX |= (1 << REFS0);   //use internal reference voltage of 1.1V
 }
 
 void toggle() {
@@ -63,8 +101,19 @@ void clap_detect(int target_state){
   }
 }
 
+int readMic(){
+  ADCSRA |= (1 << ADSC);   //start conversion
+  //delayMicroseconds(5);
+  return ADCH;   //store data in analogData variable
+}
+
 void loop() {
-  sound = analogRead(soundPin);
+  #ifdef avr
+    sound = readMic();
+  #endif
+  #ifdef basic
+    sound = analogRead(soundPin);
+  #endif
   switch (state) {
     case idle:
       if (sound > clapThresh){
